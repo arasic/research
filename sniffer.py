@@ -1,4 +1,4 @@
-import socket, struct, os, array, time
+import socket, struct, os, array, time, netifaces
 from scapy.all import ETH_P_ALL
 from scapy.all import select
 from scapy.all import MTU
@@ -100,7 +100,25 @@ def print_dict_values(network_dict):
 
 
 def main():
-    interface_name = 'eth0'
+#    print netifaces.interfaces()
+    
+    for iface in netifaces.interfaces():
+        address = netifaces.ifaddresses(iface)
+        try:
+            if_mac = "N/A"
+            if address[netifaces.AF_LINK][0] is not None:
+                if_mac = address[netifaces.AF_LINK][0]['addr']
+
+            if_ip = "N/A"
+            if address[netifaces.AF_INET][0] is not None:
+                if_ip = address[netifaces.AF_INET][0]['addr']
+#            print '%s : %s / %s' % (iface, if_mac, if_ip)
+            if if_ip.startswith("192.") or if_ip.startswith("172."):
+                print 'Choosing interface %s' % iface
+                interface_name = iface
+        except Exception:
+#            print 'cant solve %s' % iface
+            pass
     on_ip_incoming = incoming_callback
     on_ip_outgoing = outgoing_callback
 
