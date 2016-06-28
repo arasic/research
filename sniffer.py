@@ -27,20 +27,22 @@ class NetworkFlow:
         self.count += 1
         self.time = int(time.time())
 
-    def get_width(self, ip, port):
+    def get_width(self, value):
         tabs ="\t"
-        if (len(str(ip)) + len(str(port))) < 15:
+        if len(value) < 15:
             tabs +="\t"
         return tabs
 
     def __str__(self):
         msg = ""
         msg += "%s:%s" % (self.ip_src, self.port_src)
-        msg += self.get_width(self.ip_src, self.port_src)
-        msg += "(%s)\t" % self.mac_src
+        msg += self.get_width(str(self.ip_src) + str(self.port_src))
+        msg += "(%s)" % self.mac_src
+        msg += self.get_width(self.mac_src)
         msg += "%s:%s" % (self.ip_dst, self.port_dst)
-        msg += self.get_width(self.ip_dst, self.port_dst)
-        msg += "(%s)\t" % self.mac_dst
+        msg += self.get_width(str(self.ip_dst) +  str(self.port_dst))
+        msg += "(%s)" % self.mac_dst
+        msg += self.get_width(self.mac_dst)
         msg += "%s\t" % self.count
 #        msg += "%s\t" % self.time
         msg += "%s\t" % self.proto
