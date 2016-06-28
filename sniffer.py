@@ -95,13 +95,17 @@ def get_ports(msg):
     return port_src, port_dst
 
 def get_src_mac(pkt):
-    return binascii.hexlify(pkt[6:12]).decode()
+    return "%x:%x:%x:%x:%x:%x" % struct.unpack("BBBBBB",pkt[6:12])
 
 def get_dst_mac(pkt):
-    return binascii.hexlify(pkt[0:6]).decode()
+    return "%x:%x:%x:%x:%x:%x" % struct.unpack("BBBBBB",pkt[0:6])
 
+# More info on ether types at : 
+# http://www.iana.org/assignments/ieee-802-numbers/ieee-802-numbers.xhtml
+# https://en.wikipedia.org/wiki/EtherType
 def get_ether_type(pkt):
-    return binascii.hexlify(pkt[12:14]).decode()
+#    return binascii.hexlify(pkt[12:14]).decode()
+    return "0x0%x" % struct.unpack('!H', pkt[12:14])
 
 def get_payload(pkt):
     return pkt[14:]
@@ -154,6 +158,7 @@ def main():
             continue
         ip_header = pkt[14:34]
         payload = get_payload(pkt)
+#        print "Ether type : %s" % get_ether_type(pkt)
         process_ipframe(sa_ll[2], ip_header, payload, pkt)
 
 def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto, frame):
@@ -235,7 +240,7 @@ if __name__ == '__main__':
         print 'Traffic in(%s), traffic out(%s)' % (len(traffic_in),
                 len(traffic_out))
         print 'printing traffic in.'
-        print 'ip src:port\t\tsrc-mac\t\tip dst:port\t\tdst-mac\t\thits\tprotocol'
+        print 'ip src:port\t\tsrc-mac\t\t\tip dst:port\t\tdst-mac\t\t\thits\tprotocol'
         print_dict_values(traffic_in)
         print 'printing traffic out.'
         print_dict_values(traffic_out)
