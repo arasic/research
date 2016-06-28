@@ -1,4 +1,4 @@
-import socket, struct, os, array, time, netifaces
+import socket, struct, os, array, time, netifaces, binascii
 from scapy.all import ETH_P_ALL
 from scapy.all import select
 from scapy.all import MTU
@@ -37,12 +37,12 @@ class NetworkFlow:
         msg = ""
         msg += "%s:%s" % (self.ip_src, self.port_src)
         msg += self.get_width(self.ip_src, self.port_src)
-
+        msg += "(%s)\t" % self.mac_src
         msg += "%s:%s" % (self.ip_dst, self.port_dst)
         msg += self.get_width(self.ip_dst, self.port_dst)
-
+        msg += "(%s)\t" % self.mac_dst
         msg += "%s\t" % self.count
-        msg += "%s\t" % self.time
+#        msg += "%s\t" % self.time
         msg += "%s\t" % self.proto
         return msg
 
@@ -94,10 +94,22 @@ def get_ports(msg):
     port_dst = struct.unpack('!H', msg[22:24])[0]
     return port_src, port_dst
 
+def get_src_mac(pkt):
+    return binascii.hexlify(pkt[6:12]).decode()
+
+def get_dst_mac(pkt):
+    return binascii.hexlify(pkt[0:6]).decode()
+
+def get_ether_type(pkt):
+    return binascii.hexlify(pkt[12:14]).decode()
+
+def get_payload(pkt):
+    return pkt[14:]
+#    return binascii.hexlify(packet[14:]).decode()
+
 def print_dict_values(network_dict):
     for key in network_dict.keys():
         print network_dict[key]
-
 
 def main():
 #    print netifaces.interfaces()
@@ -141,10 +153,10 @@ def main():
         if eth_header[2] != 0x800 :
             continue
         ip_header = pkt[14:34]
-        payload = pkt[14:]
-        process_ipframe(sa_ll[2], ip_header, payload)
+        payload = get_payload(pkt)
+        process_ipframe(sa_ll[2], ip_header, payload, pkt)
 
-def incoming_callback(ip_src, port_src, ip_dst, port_dst, proto, frame):
+def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto, frame):
   #pass
 #    srcIP = socket.inet_ntoa(src)
 #    dstIP = socket.inet_ntoa(dst)
@@ -152,8 +164,8 @@ def incoming_callback(ip_src, port_src, ip_dst, port_dst, proto, frame):
 #        %(srcIP, dstIP, len(frame)))
     addressTuple = ip_src+':'+ip_dst
     if addressTuple not in traffic_in:
-        mac_src = "N/A"
-        mac_dst = "N/A"
+        mac_src = src_mac
+        mac_dst = dst_mac
         traffic_in[addressTuple] = NetworkFlow(
               mac_src, 
               mac_dst, 
@@ -167,7 +179,7 @@ def incoming_callback(ip_src, port_src, ip_dst, port_dst, proto, frame):
     else:
         traffic_in[addressTuple].add(1,1)
 
-def outgoing_callback(ip_src, port_src, ip_dst, port_dst, proto, frame):
+def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto, frame):
   #pass
 #    srcIP = socket.inet_ntoa(src)
 #    dstIP = socket.inet_ntoa(dst)
@@ -175,8 +187,8 @@ def outgoing_callback(ip_src, port_src, ip_dst, port_dst, proto, frame):
 #        %(srcIP, dstIP, len(frame)))
     addressTuple = ip_src+':'+ip_dst
     if addressTuple not in traffic_out:
-        mac_src = "N/A"
-        mac_dst = "N/A"
+        mac_src = src_mac
+        mac_dst = dst_mac
         traffic_out[addressTuple] = NetworkFlow(
               mac_src,
               mac_dst,
@@ -191,7 +203,7 @@ def outgoing_callback(ip_src, port_src, ip_dst, port_dst, proto, frame):
         traffic_out[addressTuple].add(1,1)
 
 
-def process_ipframe( pkt_type, ip_header, payload):
+def process_ipframe( pkt_type, ip_header, payload, pkt):
 
     # Extract the 20 bytes IP header, ignoring the IP options
     fields = struct.unpack("!BBHHHBBHII", ip_header)
@@ -202,17 +214,19 @@ def process_ipframe( pkt_type, ip_header, payload):
 #    ip_src = payload[12:16]
 #    ip_dst = payload[16:20]
 #    ip_src2, ip_dst2 = get_ips(payload)
+    src_mac = get_src_mac(pkt)
+    dst_mac = get_dst_mac(pkt)
     ip_src,port_src,ip_dst,port_dst,proto = get_pkt_info(payload)
 
     ip_frame = payload[0:iplen]
 #    import pdb;pdb.set_trace()
     if pkt_type == socket.PACKET_OUTGOING:
 #        if on_ip_outgoing is not None:
-            incoming_callback(ip_src,port_src,ip_dst,port_dst,proto, ip_frame)
+            incoming_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto, ip_frame)
 
     else:
 #        if on_ip_incoming is not None:
-            outgoing_callback(ip_src,port_src,ip_dst,port_dst,proto, ip_frame)
+            outgoing_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto, ip_frame)
 
 if __name__ == '__main__':
     try:
@@ -221,10 +235,12 @@ if __name__ == '__main__':
         print 'Traffic in(%s), traffic out(%s)' % (len(traffic_in),
                 len(traffic_out))
         print 'printing traffic in.'
-        print 'ip src:port\t\tip dst:port\t\thits\ttime\t\tprotocol'
+        print 'ip src:port\t\tsrc-mac\t\tip dst:port\t\tdst-mac\t\thits\tprotocol'
         print_dict_values(traffic_in)
         print 'printing traffic out.'
         print_dict_values(traffic_out)
         print 'Stopping process..'
-    except Exception:
-        print 'an exception has occurred'
+    except Exception, err:
+        print 'An Exception has occurred.'
+        print Exception, err
+
