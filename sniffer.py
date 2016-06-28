@@ -15,6 +15,8 @@ class NetworkFlow:
         self.port_src = port_src
         self.ip_dst = ip_dst
         self.port_dst = port_dst
+        # Protocols can be found at : 
+        # http://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
         self.proto = proto
         self.total_size = 0
         self.count = 1
@@ -25,12 +27,23 @@ class NetworkFlow:
         self.count += 1
         self.time = int(time.time())
 
+    def get_width(self, ip, port):
+        tabs ="\t"
+        if (len(str(ip)) + len(str(port))) < 15:
+            tabs +="\t"
+        return tabs
+
     def __str__(self):
         msg = ""
-        msg += "%s:%s\t" % (self.ip_src, self.port_src)
-        msg += "%s:%s\t" % (self.ip_dst, self.port_dst)
+        msg += "%s:%s" % (self.ip_src, self.port_src)
+        msg += self.get_width(self.ip_src, self.port_src)
+
+        msg += "%s:%s" % (self.ip_dst, self.port_dst)
+        msg += self.get_width(self.ip_dst, self.port_dst)
+
         msg += "%s\t" % self.count
         msg += "%s\t" % self.time
+        msg += "%s\t" % self.proto
         return msg
 
 class Sniff:
@@ -85,8 +98,9 @@ def print_dict_values(network_dict):
     for key in network_dict.keys():
         print network_dict[key]
 
+
 def main():
-    interface_name = 'enp2s0'
+    interface_name = 'eth0'
     on_ip_incoming = incoming_callback
     on_ip_outgoing = outgoing_callback
 
@@ -188,8 +202,8 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print 'Traffic in(%s), traffic out(%s)' % (len(traffic_in),
                 len(traffic_out))
-        print 'ip src:port\t\tip dst:port\t\thits\ttime'
         print 'printing traffic in.'
+        print 'ip src:port\t\tip dst:port\t\thits\ttime\t\tprotocol'
         print_dict_values(traffic_in)
         print 'printing traffic out.'
         print_dict_values(traffic_out)
