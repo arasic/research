@@ -8,7 +8,7 @@ traffic_out = {}
 
 class NetworkFlow:
     networkFlow = {}
-    def __init__(self, mac_src, mac_dst, ip_src, port_src, ip_dst, port_dst, proto):
+    def __init__(self, mac_src, mac_dst, ip_src, port_src, ip_dst, port_dst, pkt_size, proto):
         self.mac_src = mac_src
         self.mac_dst = mac_dst
         self.ip_src = ip_src
@@ -18,7 +18,7 @@ class NetworkFlow:
         # Protocols can be found at : 
         # http://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
         self.proto = proto
-        self.total_size = 0
+        self.total_size = pkt_size
         self.count = 1
         self.time = int(time.time())
     
@@ -44,8 +44,9 @@ class NetworkFlow:
         msg += "(%s)" % self.mac_dst
         msg += self.get_width(self.mac_dst)
         msg += "%s\t" % self.count
-#        msg += "%s\t" % self.time
-        msg += "%s\t" % self.proto
+        msg += "%s\t\t" % self.proto
+        msg += "%s" % sizeof_fmt(self.total_size)
+        msg += self.get_width(str(self.total_size))
         return msg
 
 class Sniff:
@@ -117,26 +118,41 @@ def print_dict_values(network_dict):
     for key in network_dict.keys():
         print network_dict[key]
 
-def main():
-#    print netifaces.interfaces()
-    
+def sizeof_fmt(num, suffix='B'):
+    for unit in ['','K','M','G','T','P','E','Z']:
+        if abs(num) < 1024.0:
+            return "%3.1f\t%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f\t%s%s" % (num, 'Y', suffix)
+
+def get_interface():
     for iface in netifaces.interfaces():
         address = netifaces.ifaddresses(iface)
+        print "iface:%s" % iface
+        if iface.lower() == "lo".lower():
+            continue
+#        print "address : %s\n" % address
         try:
-            if_mac = "N/A"
-            if address[netifaces.AF_LINK][0] is not None:
-                if_mac = address[netifaces.AF_LINK][0]['addr']
+#            address_af_link = address[netifaces.AF_LINK][0]
+#            print "aflink:%s" % address_af_link
+#            if address_af_link is not None:
+#                if_mac = address[netifaces.AF_LINK][0]['addr']
 
-            if_ip = "N/A"
-            if address[netifaces.AF_INET][0] is not None:
-                if_ip = address[netifaces.AF_INET][0]['addr']
+#            address_af_inet = address[netifaces.AF_INET][0]
+#            print "afinet:%s" % address_af_inet
+#            if address_af_inet is not None:
+#                if_ip = address[netifaces.AF_INET][0]['addr']
 #            print '%s : %s / %s' % (iface, if_mac, if_ip)
-            if if_ip.startswith("192.") or if_ip.startswith("172."):
-                print 'Choosing interface %s' % iface
-                interface_name = iface
-        except Exception:
-#            print 'cant solve %s' % iface
+#            if if_ip.startswith("192.") or if_ip.startswith("172."):
+            print 'Choosing interface %s' % iface
+            return iface
+        except Exception, ex:
+            print 'cant solve %s' % iface
+            print ex
             pass
+    return interface_name
+def main():
+    interface_name = get_interface()
     on_ip_incoming = incoming_callback
     on_ip_outgoing = outgoing_callback
 
@@ -163,7 +179,7 @@ def main():
 #        print "Ether type : %s" % get_ether_type(pkt)
         process_ipframe(sa_ll[2], ip_header, payload, pkt)
 
-def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto, frame):
+def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
   #pass
 #    srcIP = socket.inet_ntoa(src)
 #    dstIP = socket.inet_ntoa(dst)
@@ -179,14 +195,15 @@ def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, prot
               ip_src, 
               port_src, 
               ip_dst, 
-              port_dst, 
+              port_dst,
+              pkt_size,
               proto)
 
         print "traffic_in: adding %s" % addressTuple
     else:
-        traffic_in[addressTuple].add(1,1)
+        traffic_in[addressTuple].add(pkt_size,1)
 
-def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto, frame):
+def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
   #pass
 #    srcIP = socket.inet_ntoa(src)
 #    dstIP = socket.inet_ntoa(dst)
@@ -203,11 +220,12 @@ def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, prot
               port_src,
               ip_dst,
               port_dst,
+              pkt_size,
               proto)
 
         print "traffic_out: adding %s" % addressTuple
     else:
-        traffic_out[addressTuple].add(1,1)
+        traffic_out[addressTuple].add(pkt_size,1)
 
 
 def process_ipframe( pkt_type, ip_header, payload, pkt):
@@ -224,16 +242,17 @@ def process_ipframe( pkt_type, ip_header, payload, pkt):
     src_mac = get_src_mac(pkt)
     dst_mac = get_dst_mac(pkt)
     ip_src,port_src,ip_dst,port_dst,proto = get_pkt_info(payload)
-
+    payload_size = len(payload)
+#    print 'packet size %s' % packet_size
     ip_frame = payload[0:iplen]
 #    import pdb;pdb.set_trace()
     if pkt_type == socket.PACKET_OUTGOING:
 #        if on_ip_outgoing is not None:
-            incoming_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto, ip_frame)
+            incoming_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
 
     else:
 #        if on_ip_incoming is not None:
-            outgoing_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto, ip_frame)
+            outgoing_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
 
 if __name__ == '__main__':
     try:
@@ -242,7 +261,7 @@ if __name__ == '__main__':
         print 'Traffic in(%s), traffic out(%s)' % (len(traffic_in),
                 len(traffic_out))
         print 'printing traffic in.'
-        print 'ip src:port\t\tsrc-mac\t\t\tip dst:port\t\tdst-mac\t\t\thits\tprotocol'
+        print 'ip src:port\t\tsrc-mac\t\t\tip dst:port\t\tdst-mac\t\t\thits\tprotocol\tdata'
         print_dict_values(traffic_in)
         print 'printing traffic out.'
         print_dict_values(traffic_out)
