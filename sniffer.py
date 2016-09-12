@@ -1,10 +1,17 @@
-import socket, struct, os, array, time, netifaces, binascii
+#!/usr/bin/env python
+import socket, struct, os, array, time, netifaces, binascii, datetime, uuid
 from scapy.all import ETH_P_ALL
 from scapy.all import select
 from scapy.all import MTU
+from cassandraDB import CassandraDB
 
 traffic_in = {}
 traffic_out = {}
+
+updateIntervalTime = None
+UPDATE_TIME_LIMIT = 60
+
+counter = 10
 
 class NetworkFlow:
     networkFlow = {}
@@ -98,10 +105,10 @@ def get_ports(msg):
     return port_src, port_dst
 
 def get_src_mac(pkt):
-    return "%x:%x:%x:%x:%x:%x" % struct.unpack("BBBBBB",pkt[6:12])
+    return "%x:%x:%x:%x:%x:%x".upper() % struct.unpack("BBBBBB",pkt[6:12])
 
 def get_dst_mac(pkt):
-    return "%x:%x:%x:%x:%x:%x" % struct.unpack("BBBBBB",pkt[0:6])
+    return "%x:%x:%x:%x:%x:%x".upper() % struct.unpack("BBBBBB",pkt[0:6])
 
 # More info on ether types at : 
 # http://www.iana.org/assignments/ieee-802-numbers/ieee-802-numbers.xhtml
@@ -112,12 +119,14 @@ def get_ether_type(pkt):
 
 def get_payload(pkt):
     return pkt[14:]
-#    return binascii.hexlify(packet[14:]).decode()
+#    return binascii.hexlify(pkt[14:]).decode()
 
 def print_dict_values(network_dict):
     for key in network_dict.keys():
         print network_dict[key]
 
+# Probably one of the most elegant way to display data size in human readable
+# unit.
 def sizeof_fmt(num, suffix='B'):
     for unit in ['','K','M','G','T','P','E','Z']:
         if abs(num) < 1024.0:
@@ -125,6 +134,8 @@ def sizeof_fmt(num, suffix='B'):
         num /= 1024.0
     return "%.1f\t%s%s" % (num, 'Y', suffix)
 
+
+# Give user the option to choose the interface ?
 def get_interface():
     for iface in netifaces.interfaces():
         address = netifaces.ifaddresses(iface)
@@ -151,7 +162,11 @@ def get_interface():
             print ex
             pass
     return interface_name
+
+# TODO : Need to capt dns requests
 def main():
+    global updateIntervalTime
+    updateIntervalTime = time.time()
     interface_name = get_interface()
     on_ip_incoming = incoming_callback
     on_ip_outgoing = outgoing_callback
@@ -177,6 +192,7 @@ def main():
         ip_header = pkt[14:34]
         payload = get_payload(pkt)
 #        print "Ether type : %s" % get_ether_type(pkt)
+#
         process_ipframe(sa_ll[2], ip_header, payload, pkt)
 
 def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
@@ -229,7 +245,9 @@ def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, prot
 
 
 def process_ipframe( pkt_type, ip_header, payload, pkt):
-
+    
+    global updateIntervalTime
+    global counter
     # Extract the 20 bytes IP header, ignoring the IP options
     fields = struct.unpack("!BBHHHBBHII", ip_header)
 
@@ -242,10 +260,70 @@ def process_ipframe( pkt_type, ip_header, payload, pkt):
     src_mac = get_src_mac(pkt)
     dst_mac = get_dst_mac(pkt)
     ip_src,port_src,ip_dst,port_dst,proto = get_pkt_info(payload)
+
+
+    #time
+#    currentTimeNow = datetime.datetime.now()
+#    currentTime = currentTimeNow.time()
+#    print "current time now %s" % currentTimeNow
+#    print "current time %s" % currentTime
+
+    currentTime = time.time()
+    counter = counter-1
+
+    if(counter <= 0 or updateIntervalTime < currentTime):
+        if len(traffic_out) > 0:
+            counter = 10000
+        print "perform display..dumping data in DB"
+        updateIntervalTime = currentTime + UPDATE_TIME_LIMIT
+        print "time set to %s " % updateIntervalTime
+        
+        currenttime = datetime.datetime.utcnow().isoformat()[:-3]
+        cassandraDB = CassandraDB("192.168.2.4")
+        batchQuery = "BEGIN BATCH "
+        for entry in traffic_out:
+            entry_value = traffic_out[entry]
+            insertQuery = (("insert into test.traffic "
+            "(uuid, insertion_time, src_ip, src_port, src_mac_addr, dst_ip,"
+            "dst_port, dst_mac_addr, packets, protocol, data_size) "
+            "values(%s, '%s', '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
+             % (uuid.uuid1(), currenttime, entry_value.ip_src, entry_value.port_src, 
+                 entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst, 
+                 entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
+            batchQuery += insertQuery
+
+        batchQuery += " APPLY BATCH;"
+        cassandraDB.query(batchQuery)
+        
+        traffic_out.clear()
+        
+        batchQuery = "BEGIN BATCH "
+        for entry in traffic_in:
+            entry_value = traffic_in[entry]
+            insertQuery = (("insert into test.traffic "
+            "(uuid, insertion_time, src_ip, src_port, src_mac_addr, dst_ip,"
+            "dst_port, dst_mac_addr, packets, protocol, data_size) "
+            "values(%s, '%s', '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
+             % (uuid.uuid1(), currenttime, entry_value.ip_src, entry_value.port_src, 
+                 entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst, 
+                 entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
+            batchQuery += insertQuery
+        
+        batchQuery += " APPLY BATCH;"
+        cassandraDB.query(batchQuery)
+        
+        traffic_in.clear()
+        
+        cassandraDB.shutdownSession()
+
+    #print "current time %s" % currentTime
+
+    if port_dst == 53:
+        print payload
+#       import pdb;pdb.set_trace()
     payload_size = len(payload)
 #    print 'packet size %s' % packet_size
     ip_frame = payload[0:iplen]
-#    import pdb;pdb.set_trace()
     if pkt_type == socket.PACKET_OUTGOING:
 #        if on_ip_outgoing is not None:
             incoming_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
