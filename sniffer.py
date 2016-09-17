@@ -11,11 +11,13 @@ traffic_out = {}
 updateIntervalTime = None
 UPDATE_TIME_LIMIT = 60
 
+cassandraDB = None
 counter = 10
 
 class NetworkFlow:
     networkFlow = {}
     def __init__(self, mac_src, mac_dst, ip_src, port_src, ip_dst, port_dst, pkt_size, proto):
+        self.time = time
         self.mac_src = mac_src
         self.mac_dst = mac_dst
         self.ip_src = ip_src
@@ -195,13 +197,13 @@ def main():
 #
         process_ipframe(sa_ll[2], ip_header, payload, pkt)
 
-def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
+def incoming_callback(time, src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
   #pass
 #    srcIP = socket.inet_ntoa(src)
 #    dstIP = socket.inet_ntoa(dst)
 #    print("incoming - src=%s, dst=%s, frame len = %d"
 #        %(srcIP, dstIP, len(frame)))
-    addressTuple = ip_src+':'+ip_dst
+    addressTuple = ip_src+":"+str(port_src)+"-"+ip_dst+":"+str(port_dst)
     if addressTuple not in traffic_in:
         mac_src = src_mac
         mac_dst = dst_mac
@@ -219,13 +221,13 @@ def incoming_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, prot
     else:
         traffic_in[addressTuple].add(pkt_size,1)
 
-def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
+def outgoing_callback(time, src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, proto,pkt_size, frame):
   #pass
 #    srcIP = socket.inet_ntoa(src)
 #    dstIP = socket.inet_ntoa(dst)
 #    print("outgoing - src=%s, dst=%s, frame len = %d"
 #        %(srcIP, dstIP, len(frame)))
-    addressTuple = ip_src+':'+ip_dst
+    addressTuple = ip_src+":"+str(port_src)+"-"+ip_dst+":"+str(port_dst)
     if addressTuple not in traffic_out:
         mac_src = src_mac
         mac_dst = dst_mac
@@ -243,11 +245,45 @@ def outgoing_callback(src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst, prot
     else:
         traffic_out[addressTuple].add(pkt_size,1)
 
+def execute_query(batch_query):
+    global cassandraDB
+    try:
+        cassandraDB.query(batch_query)
+    except IOError, error:
+        print IOError, error
+        cassandraDB = CassandraDB("192.168.2.4")
+        print "trying again.."
+        cassandraDB.query(batch_query)
+
+def store_traffic(traffic_map):
+    maxQueryLength = 500
+    currenttime = datetime.datetime.utcnow().isoformat()[:-3]	
+    batchQuery = "BEGIN BATCH "
+    for entry_key,entry_value in traffic_map.items():
+		insertQuery = (("insert into test.traffic2 "
+		"(insertion_time, time, src_ip, src_port, src_mac_addr, dst_ip,"
+		"dst_port, dst_mac_addr, packets, protocol, data_size) "
+		"values('%s', %d, '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
+		 % (currenttime, entry_value.time, entry_value.ip_src, entry_value.port_src,
+			 entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst,
+			 entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
+		batchQuery += insertQuery
+
+		del traffic_map[entry_key]
+
+		if len(batchQuery) > maxQueryLength:
+			batchQuery += " APPLY BATCH;"
+			execute_query(batchQuery)
+			batchQuery = "BEGIN BATCH "
+    batchQuery += " APPLY BATCH;"
+    execute_query(batchQuery)
+    print "traffic-map size = %d " % len(traffic_map)
 
 def process_ipframe( pkt_type, ip_header, payload, pkt):
     
     global updateIntervalTime
     global counter
+    global cassandraDB
     # Extract the 20 bytes IP header, ignoring the IP options
     fields = struct.unpack("!BBHHHBBHII", ip_header)
 
@@ -278,43 +314,13 @@ def process_ipframe( pkt_type, ip_header, payload, pkt):
         updateIntervalTime = currentTime + UPDATE_TIME_LIMIT
         print "time set to %s " % updateIntervalTime
         
-        currenttime = datetime.datetime.utcnow().isoformat()[:-3]
-        cassandraDB = CassandraDB("192.168.2.4")
-        batchQuery = "BEGIN BATCH "
-        for entry in traffic_out:
-            entry_value = traffic_out[entry]
-            insertQuery = (("insert into test.traffic "
-            "(uuid, insertion_time, src_ip, src_port, src_mac_addr, dst_ip,"
-            "dst_port, dst_mac_addr, packets, protocol, data_size) "
-            "values(%s, '%s', '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
-             % (uuid.uuid1(), currenttime, entry_value.ip_src, entry_value.port_src, 
-                 entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst, 
-                 entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
-            batchQuery += insertQuery
-
-        batchQuery += " APPLY BATCH;"
-        cassandraDB.query(batchQuery)
+        if not cassandraDB:
+            cassandraDB = CassandraDB("192.168.2.4")
+		
+        store_traffic(traffic_out)
+        store_traffic(traffic_in)
         
-        traffic_out.clear()
-        
-        batchQuery = "BEGIN BATCH "
-        for entry in traffic_in:
-            entry_value = traffic_in[entry]
-            insertQuery = (("insert into test.traffic "
-            "(uuid, insertion_time, src_ip, src_port, src_mac_addr, dst_ip,"
-            "dst_port, dst_mac_addr, packets, protocol, data_size) "
-            "values(%s, '%s', '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
-             % (uuid.uuid1(), currenttime, entry_value.ip_src, entry_value.port_src, 
-                 entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst, 
-                 entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
-            batchQuery += insertQuery
-        
-        batchQuery += " APPLY BATCH;"
-        cassandraDB.query(batchQuery)
-        
-        traffic_in.clear()
-        
-        cassandraDB.shutdownSession()
+#        cassandraDB.shutdownSession()
 
     #print "current time %s" % currentTime
 
@@ -326,11 +332,11 @@ def process_ipframe( pkt_type, ip_header, payload, pkt):
     ip_frame = payload[0:iplen]
     if pkt_type == socket.PACKET_OUTGOING:
 #        if on_ip_outgoing is not None:
-            incoming_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
+            incoming_callback(currentTime, src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
 
     else:
 #        if on_ip_incoming is not None:
-            outgoing_callback(src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
+            outgoing_callback(currentTime, src_mac, dst_mac, ip_src,port_src,ip_dst,port_dst,proto,payload_size, ip_frame)
 
 if __name__ == '__main__':
     try:
