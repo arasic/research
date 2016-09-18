@@ -1,9 +1,11 @@
 #!/usr/bin/env python
-import socket, struct, os, array, time, netifaces, binascii, datetime, uuid
+import socket, struct, os, array, time, netifaces, binascii, datetime
 from scapy.all import ETH_P_ALL
 from scapy.all import select
 from scapy.all import MTU
 from cassandraDB import CassandraDB
+from time import sleep
+import uuid
 
 traffic_in = {}
 traffic_out = {}
@@ -29,12 +31,13 @@ class NetworkFlow:
         self.proto = proto
         self.total_size = pkt_size
         self.count = 1
-        self.time = int(time.time())
-    
+        self.time = time.time()
+        self.generateduuid = uuid.uuid1()
+
     def add(self, size, count):
         self.total_size += size
         self.count += 1
-        self.time = int(time.time())
+        self.time = time.time()
 
     def get_width(self, value):
         tabs ="\t"
@@ -248,6 +251,7 @@ def outgoing_callback(time, src_mac, dst_mac, ip_src, port_src, ip_dst, port_dst
 def execute_query(batch_query):
     global cassandraDB
     try:
+#        sleep(0.5)
         cassandraDB.query(batch_query)
     except IOError, error:
         print IOError, error
@@ -256,27 +260,30 @@ def execute_query(batch_query):
         cassandraDB.query(batch_query)
 
 def store_traffic(traffic_map):
-    maxQueryLength = 500
-    currenttime = datetime.datetime.utcnow().isoformat()[:-3]	
-    batchQuery = "BEGIN BATCH "
+    maxQueryLength = 10000
+#    batchQuery = "BEGIN BATCH "
+    batchQuery = ""
+    lstQueries = []
     for entry_key,entry_value in traffic_map.items():
-		insertQuery = (("insert into test.traffic2 "
-		"(insertion_time, time, src_ip, src_port, src_mac_addr, dst_ip,"
-		"dst_port, dst_mac_addr, packets, protocol, data_size) "
-		"values('%s', %d, '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
-		 % (currenttime, entry_value.time, entry_value.ip_src, entry_value.port_src,
-			 entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst,
-			 entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
-		batchQuery += insertQuery
+        currenttime = datetime.datetime.utcnow().isoformat()[:-3]
+        insertQuery = (("insert into test.traffic4 "
+        "(insertion_time, uuid, src_ip, src_port, src_mac_addr, dst_ip,"
+        "dst_port, dst_mac_addr, packets, protocol, data_size) "
+        "values('%s', %s, '%s', %d, '%s', '%s', %d, '%s', %d, %d, %d);")
+         % (currenttime, entry_value.generateduuid, entry_value.ip_src, entry_value.port_src,
+            entry_value.mac_src, entry_value.ip_dst, entry_value.port_dst,
+            entry_value.mac_dst, entry_value.count, entry_value.proto, entry_value.total_size))
+        lstQueries.append(insertQuery)
+    
+        del traffic_map[entry_key]
 
-		del traffic_map[entry_key]
-
-		if len(batchQuery) > maxQueryLength:
-			batchQuery += " APPLY BATCH;"
-			execute_query(batchQuery)
-			batchQuery = "BEGIN BATCH "
-    batchQuery += " APPLY BATCH;"
-    execute_query(batchQuery)
+        if len(lstQueries) > maxQueryLength:
+#            batchQuery += " APPLY BATCH;"
+            execute_query(lstQueries)
+            lstQueries = []
+#            batchQuery = "BEGIN BATCH "
+#    batchQuery += " APPLY BATCH;"
+    execute_query(lstQueries)
     print "traffic-map size = %d " % len(traffic_map)
 
 def process_ipframe( pkt_type, ip_header, payload, pkt):
@@ -313,7 +320,7 @@ def process_ipframe( pkt_type, ip_header, payload, pkt):
         print "perform display..dumping data in DB"
         updateIntervalTime = currentTime + UPDATE_TIME_LIMIT
         print "time set to %s " % updateIntervalTime
-        
+#        import pdb;pdb.set_trace()
         if not cassandraDB:
             cassandraDB = CassandraDB("192.168.2.4")
 		
